@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -91,13 +92,14 @@ namespace recompui
 
     protected:
         std::string_view get_type_name() override { return "ModDownloadsPanel"; }
+        void process_event(const Event &event) override;
 
     private:
         void load_discovery_mods(const std::vector<DiscoveryMod> &mods);
         void refresh_discovery_mods();
         void download_mod(const DiscoveryMod &mod);
         std::string fetch_json_from_url(const std::string &url);
-        std::vector<DiscoveryMod>
+        static std::vector<DiscoveryMod>
         parse_discovery_json(const std::string &json_data);
         void download_file_from_url(const std::string &url,
                                     const std::string &output_path);
@@ -116,15 +118,18 @@ namespace recompui
         TextInput *search_input = nullptr;
         Button *sort_name_button = nullptr;
         ScrollContainer *mod_list_container = nullptr;
+        Container *loading_indicator = nullptr;
+        Element *loading_spinner = nullptr;
         std::vector<ModDiscoveryEntry *> mod_entries;
-        std::vector<DiscoveryMod> fetched_mods;
+        inline static std::vector<DiscoveryMod> fetched_mods;
         std::string name_search_query;
         bool sort_name_ascending = true;
-        std::string fetch_error;
+        inline static std::string fetch_error;
         bool thumbnail_viewport_dirty = false;
         int thumbnail_viewport_retry_frames = 0;
         bool is_loading = false;
-        bool fetch_completed = false;
+        inline static bool fetch_completed = false;
+        inline static std::future<std::vector<DiscoveryMod>> catalog_download;
     };
     class ElementModDownloads : public Rml::Element
     {

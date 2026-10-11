@@ -1,11 +1,16 @@
 #include "../../../lib/N64ModernRuntime/N64Recomp/lib/tomlplusplus/vendor/json.hpp"
 #include "./ui_mod_discovery.h"
 #include "librecomp/game.hpp"
+#include "librecomp/mods.hpp"
+#include "elements/ui_icon_button.h"
+#include "elements/ui_svg.h"
 #include "recompui/recompui.h"
 #include "ui_utils.h"
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cmath>
 #include <thread>
 
 extern std::vector<recomp::GameEntry> supported_games;
@@ -27,6 +32,7 @@ namespace recompui
     {
         ContextId context = get_current_context();
 
+        set_width(100.0f, Unit::Percent);
         entry_container = context.create_element<Container>(
             this, FlexDirection::Row, JustifyContent::FlexStart);
         entry_container->set_width(100.0f, Unit::Percent);
@@ -142,7 +148,7 @@ namespace recompui
 
     // Initializes the discovery modal panel and child controls.
     ModDownloadsPanel::ModDownloadsPanel(ResourceId rid, Element *parent)
-        : Element(rid, parent)
+        : Element(rid, parent, Events(EventType::Update))
     {
         ContextId context = get_current_context();
 
@@ -196,10 +202,26 @@ namespace recompui
                 refresh_discovery_mods();
             });
 
-        // Right side: sort toggle button
+        // Refresh and sort buttons.
+        Container *actions = context.create_element<Container>(
+            filter_container, FlexDirection::Row, JustifyContent::FlexEnd);
+        actions->set_align_items(AlignItems::Center);
+        actions->set_flex(0.0f, 0.0f);
+        auto refresh_button = context.create_element<IconButton>(
+            actions, "icons/Reset.svg", ButtonStyle::Secondary, IconButtonSize::XLarge);
+        refresh_button->set_margin_right(12.0f);
+        refresh_button->add_pressed_callback([this]() {
+            if (is_loading)
+                return;
+            recomp::mods::scan_mods();
+            fetch_discovery_data();
+        });
+
         sort_name_button =
-            context.create_element<Button>(filter_container, "Name (A-Z)",
+            context.create_element<Button>(actions, "Name (A-Z)",
                                            ButtonStyle::Secondary);
+        sort_name_button->set_width(210.0f, Unit::Px);
+        sort_name_button->set_flex(0.0f, 0.0f);
         sort_name_button->add_pressed_callback([this]()
                                                {
                                                    sort_name_ascending =
@@ -216,51 +238,102 @@ namespace recompui
         status_label->set_color(Color{204, 204, 204, 255});
         status_label->set_text_align(TextAlign::Center);
 
+        loading_indicator = context.create_element<Container>(
+            content_panel, FlexDirection::Column, JustifyContent::Center);
+        loading_indicator->set_align_items(AlignItems::Center);
+        loading_indicator->set_flex(1.0f, 1.0f);
+        loading_indicator->set_display(Display::None);
+        loading_spinner = context.create_element<Svg>(loading_indicator, "icons/RecordSpinner.svg");
+        loading_spinner->set_width(64.0f, Unit::Px);
+        loading_spinner->set_height(64.0f, Unit::Px);
+
         mod_list_container = context.create_element<ScrollContainer>(
             content_panel, ScrollDirection::Vertical);
+        mod_list_container->set_display(Display::Flex);
+        mod_list_container->set_flex_direction(FlexDirection::Column);
         mod_list_container->set_flex(1.0f, 1.0f);
         mod_list_container->set_width(100.0f, Unit::Percent);
 
         sort_name_button->set_nav(NavDirection::Up, search_input);
-        search_input->set_nav(NavDirection::Down, sort_name_button);
+        refresh_button->set_nav(NavDirection::Up, search_input);
+        refresh_button->set_nav(NavDirection::Right, sort_name_button);
+        sort_name_button->set_nav(NavDirection::Left, refresh_button);
+        search_input->set_nav(NavDirection::Down, refresh_button);
 
-        fetch_discovery_data();
+        if (!fetch_completed || catalog_download.valid())
+            fetch_discovery_data();
+        else if (!fetch_error.empty())
+            status_label->set_text(fetch_error);
+        else
+            load_discovery_mods(fetched_mods);
+        queue_update();
     }
 
     ModDownloadsPanel::~ModDownloadsPanel() {}
 
-    // Fetches discovery JSON and refreshes rendered entries.
     void ModDownloadsPanel::fetch_discovery_data()
     {
         if (is_loading)
             return;
 
         is_loading = true;
-        status_label->set_text("Loading discovery data...");
-        mod_list_container->clear_children();
-        mod_entries.clear();
+        loading_indicator->set_display(Display::Flex);
+        status_label->set_display(Display::None);
+        mod_list_container->set_display(Display::None);
+        sort_name_button->set_enabled(false);
+        fetch_error.clear();
 
-        try
+        if (!catalog_download.valid())
         {
-            std::string discovery_url = get_discovery_url();
-            if (discovery_url.empty())
-                throw std::runtime_error("No discovery URL configured for this game");
-            const auto index = nlohmann::json::parse(http_fetch_string(discovery_url));
+            const std::string url = get_discovery_url();
+            catalog_download = std::async(std::launch::async, [url]() {
+                if (url.empty())
+                    throw std::runtime_error("No discovery URL configured for this game");
+                const auto index = nlohmann::json::parse(http_fetch_string(url));
+                std::vector<DiscoveryMod> mods;
+                for (const auto &chunk_url : index)
+                {
+                    auto chunk_mods = parse_discovery_json(http_fetch_string(chunk_url.get<std::string>()));
+                    mods.insert(mods.end(), chunk_mods.begin(), chunk_mods.end());
+                }
+                return mods;
+            });
+        }
+        queue_update();
+    }
 
-            std::vector<DiscoveryMod> mods;
-            for (const auto &chunk_url : index)
+    void ModDownloadsPanel::process_event(const Event &event)
+    {
+        if (event.type == EventType::Update)
+        {
+            if (is_loading)
             {
-                auto chunk_mods = parse_discovery_json(http_fetch_string(chunk_url.get<std::string>()));
-                mods.insert(mods.end(), chunk_mods.begin(), chunk_mods.end());
+                const double seconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                loading_spinner->set_rotation(static_cast<float>(std::fmod(seconds, 1.0) * 360.0));
+                if (catalog_download.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+                {
+                    is_loading = false;
+                    fetch_completed = true;
+                    loading_indicator->set_display(Display::None);
+                    status_label->set_display(Display::Block);
+                    mod_list_container->set_display(Display::Flex);
+                    sort_name_button->set_enabled(true);
+                    try
+                    {
+                        fetched_mods = catalog_download.get();
+                        load_discovery_mods(fetched_mods);
+                    }
+                    catch (const std::exception &)
+                    {
+                        fetch_error = "No mods available right now. Check later!";
+                        status_label->set_text(fetch_error);
+                    }
+                }
             }
-            fetched_mods = std::move(mods);
-            load_discovery_mods(fetched_mods);
+            queue_update();
         }
-        catch (const std::exception &e)
-        { status_label->set_text("No mods available right now. Check later!");
-        }
-
-        is_loading = false;
+        Element::process_event(event);
     }
 
     void ModDownloadsPanel::refresh_discovery_mods()

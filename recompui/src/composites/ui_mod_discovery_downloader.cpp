@@ -4,26 +4,35 @@
 #include "ui_mod_discovery.h"
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
-#include "../../../lib/N64ModernRuntime/N64Recomp/lib/tomlplusplus/vendor/json.hpp"
+#include <cctype>
 
 namespace recompui
 {
-    // Thunderstore package names are separate from the IDs in mod.json.
-    static nlohmann::json &package_mod_ids()
-    {
-        static nlohmann::json ids = [] {
-            std::ifstream input(recomp::mods::get_mods_directory() / ".thunderstore-packages.json");
-            auto saved = nlohmann::json::parse(input, nullptr, false);
-            return saved.is_object() ? saved : nlohmann::json::object();
-        }();
-        return ids;
-    }
-
+    // Read the same installed mod list as Manage Mods.
     static std::optional<recomp::mods::ModDetails> installed_package(const std::string &id)
     {
-        const auto &ids = package_mod_ids();
-        return recomp::mods::get_details_for_mod(ids.value(id, id));
+        const auto mods = recomp::mods::get_all_mod_details(get_game_mod_id());
+        for (const auto &mod : mods)
+            if (mod.mod_id == id)
+                return mod;
+
+        auto normalize = [](const std::string &name) {
+            std::string result;
+            for (unsigned char character : name)
+                if (std::isalnum(character))
+                    result += static_cast<char>(std::tolower(character));
+            return result;
+        };
+        const std::string package_name = normalize(id.substr(id.find('-') + 1));
+        std::optional<recomp::mods::ModDetails> match;
+        for (const auto &mod : mods)
+            if (normalize(mod.mod_id) == package_name || normalize(mod.display_name) == package_name)
+            {
+                if (match)
+                    return std::nullopt;
+                match = mod;
+            }
+        return match;
     }
 
     // Download and install a mod from the discovery
@@ -64,6 +73,9 @@ namespace recompui
                 file_paths, [](std::filesystem::path, size_t, size_t) {},
                 install_result);
 
+            if (install_result.pending_installations.empty() && install_result.error_messages.empty())
+                install_result.error_messages.push_back("Invalid Mod Package. The mod owner uploaded a malformed archive.");
+
             bool needs_close = std::any_of(install_result.pending_installations.begin(),
                                            install_result.pending_installations.end(),
                                            [](const ModInstaller::Installation &i)
@@ -88,6 +100,7 @@ namespace recompui
                 return false;
             }
 
+            recomp::mods::scan_mods();
             return true;
         }
         catch (const std::exception &e)
@@ -264,11 +277,8 @@ namespace recompui
                 if (entry == downloading_entry)
                     continue;
                 ModInstallStatus entry_status = get_mod_install_status(entry->mod_data);
-                if (entry_status != ModInstallStatus::NotInstalled)
-                {
-                    entry->update_install_status(entry_status);
-                    entry->queue_update();
-                }
+                entry->update_install_status(entry_status);
+                entry->queue_update();
             }
 
             std::string final_msg = "Successfully installed " + mod.name + "!";

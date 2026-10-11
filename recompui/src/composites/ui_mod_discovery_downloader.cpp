@@ -4,9 +4,27 @@
 #include "ui_mod_discovery.h"
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include "../../../lib/N64ModernRuntime/N64Recomp/lib/tomlplusplus/vendor/json.hpp"
 
 namespace recompui
 {
+    // Thunderstore package names are separate from the IDs in mod.json.
+    static nlohmann::json &package_mod_ids()
+    {
+        static nlohmann::json ids = [] {
+            std::ifstream input(recomp::mods::get_mods_directory() / ".thunderstore-packages.json");
+            auto saved = nlohmann::json::parse(input, nullptr, false);
+            return saved.is_object() ? saved : nlohmann::json::object();
+        }();
+        return ids;
+    }
+
+    static std::optional<recomp::mods::ModDetails> installed_package(const std::string &id)
+    {
+        const auto &ids = package_mod_ids();
+        return recomp::mods::get_details_for_mod(ids.value(id, id));
+    }
 
     // Download and install a mod from the discovery
     bool ModDownloadsPanel::install_single_mod_file(
@@ -29,6 +47,8 @@ namespace recompui
             std::string filename = (last_slash != std::string::npos)
                                        ? url.substr(last_slash + 1)
                                        : "download.zip";
+            if (filename.empty())
+                filename = "thunderstore-download.zip";
             std::filesystem::path temp_file = temp_dir / filename;
 
             http_download_to_file(url, temp_file.string());
@@ -96,7 +116,7 @@ namespace recompui
                 continue;
 
             // Check if we already have it installed, and that it satisfies the required version, if we do then we can skip trying to install it.
-            auto installed_dep_details = recomp::mods::get_details_for_mod(dep_id);
+            auto installed_dep_details = installed_package(dep_id);
             if (installed_dep_details.has_value() && !required_version.empty())
             {
                 std::string installed_ver = installed_dep_details->version.to_string();
@@ -279,7 +299,7 @@ namespace recompui
     ModInstallStatus
     ModDownloadsPanel::get_mod_install_status(const DiscoveryMod &mod)
     {
-        auto details = recomp::mods::get_details_for_mod(mod.id);
+        auto details = installed_package(mod.id);
         if (!details.has_value())
         {
             // Check whether all dependencies are satisfiable before declaring NotInstalled
@@ -292,7 +312,7 @@ namespace recompui
                 if (dep_id.empty())
                     continue;
 
-                auto installed = recomp::mods::get_details_for_mod(dep_id);
+                auto installed = installed_package(dep_id);
                 if (installed.has_value())
                 {
                     if (required_version.empty())

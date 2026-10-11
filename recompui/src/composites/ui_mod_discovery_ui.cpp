@@ -279,42 +279,42 @@ namespace recompui
 
             if (j.empty())
                 throw std::runtime_error("JSON data is empty object");
-
-            for (auto it = j.begin(); it != j.end(); ++it)
+            for (const auto &package : j)
             {
+                if (package.value("is_deprecated", false) ||
+                    !package.contains("versions") || !package["versions"].is_array())
+                    continue;
+                const auto &versions = package["versions"];
+                auto latest = std::find_if(versions.begin(), versions.end(),
+                    [](const auto &version) { return version.value("is_active", true); });
+                if (latest == versions.end())
+                    continue;
+
                 DiscoveryMod mod;
-                const std::string mod_name = it.key();
-                const auto &mod_info = it.value();
-                mod.name = mod_name;
+                mod.name = package.at("name").get<std::string>();
+                std::replace(mod.name.begin(), mod.name.end(), '_', ' ');
+                mod.id = package.at("full_name").get<std::string>();
+                mod.authors = package.value("owner", "");
+                mod.description = latest->value("description", "");
+                mod.short_description = mod.description;
+                mod.file_url = latest->at("download_url").get<std::string>();
+                mod.thumbnail_url = latest->value("icon", "");
+                mod.version = latest->at("version_number").get<std::string>();
 
-                auto try_get = [&](const char *key, std::string &field)
+                if (latest->contains("dependencies") && (*latest)["dependencies"].is_array())
                 {
-                    if (mod_info.contains(key))
-                        field = mod_info[key];
-                };
-
-                try_get("description", mod.description);
-                try_get("short_description", mod.short_description);
-                try_get("authors", mod.authors);
-                try_get("file_url", mod.file_url);
-                try_get("thumbnail_image", mod.thumbnail_image);
-                try_get("thumbnail_url", mod.thumbnail_url);
-                try_get("version", mod.version);
-                try_get("id", mod.id);
-                try_get("game_id", mod.game_id);
-
-                if (mod_info.contains("dependencies") &&
-                    mod_info["dependencies"].is_array())
-                {
-                    for (const auto &dep : mod_info["dependencies"])
-                        mod.dependencies.push_back(dep);
+                    for (const auto &dep : (*latest)["dependencies"])
+                    {
+                        std::string dependency = dep.get<std::string>();
+                        const size_t version_separator = dependency.find_last_of('-');
+                        if (version_separator != std::string::npos)
+                            dependency[version_separator] = ':';
+                        mod.dependencies.push_back(std::move(dependency));
+                    }
                 }
 
-                if (mod_info.contains("tags") && mod_info["tags"].is_array())
-                {
-                    for (const auto &tag : mod_info["tags"])
-                        mod.tags.push_back(tag);
-                }
+                if (package.contains("categories") && package["categories"].is_array())
+                    mod.tags = package["categories"].get<std::vector<std::string>>();
 
                 mods.push_back(mod);
             }

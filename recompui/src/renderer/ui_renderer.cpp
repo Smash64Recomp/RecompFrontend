@@ -64,12 +64,14 @@ void CalculateTextureRowWidthPadding(uint32_t rowPitch, uint32_t &rowWidth, uint
 struct RmlPushConstants {
     Rml::Matrix4f transform;
     Rml::Vector2f translation;
+    uint32_t texture_premultiplied = 0;
 };
 
 struct TextureHandle {
     std::unique_ptr<plume::RenderTexture> texture;
     std::unique_ptr<plume::RenderDescriptorSet> set;
     bool transitioned = false;
+    bool premultiplied = false;
 };
 
 template <typename T>
@@ -403,7 +405,8 @@ public:
 
         RmlPushConstants constants{
             .transform = mvp_,
-            .translation = translation
+            .translation = translation,
+            .texture_premultiplied = texture_handle.premultiplied ? 1u : 0u
         };
 
         list_->setGraphicsPushConstants(0, &constants);
@@ -489,7 +492,23 @@ public:
         }
 
         texture_handle = texture_count_++;
-        return create_texture(texture_handle, source, source_dimensions);
+        const size_t byte_count = size_t(source_dimensions.x) * source_dimensions.y * 4;
+        std::vector<Rml::byte> pixels(source, source + byte_count);
+        for (size_t pixel_offset = 0; pixel_offset < byte_count; pixel_offset += 4) {
+            Rml::byte* pixel = pixels.data() + pixel_offset;
+            const uint32_t alpha = pixel[3];
+
+            // Adding 127 rounds to the nearest byte.
+            pixel[0] = (uint32_t(pixel[0]) * alpha + 127) / 255; // Red.
+            pixel[1] = (uint32_t(pixel[1]) * alpha + 127) / 255; // Green.
+            pixel[2] = (uint32_t(pixel[2]) * alpha + 127) / 255; // Blue.
+        }
+
+        if (!create_texture(texture_handle, pixels.data(), source_dimensions)) {
+            return false;
+        }
+        textures_.at(texture_handle).premultiplied = true;
+        return true;
     }
 
     bool create_texture(Rml::TextureHandle texture_handle, const Rml::byte* source, const Rml::Vector2i& source_dimensions, bool flip_y = false, bool bgra = false) {
@@ -498,7 +517,6 @@ public:
 
         if (texture != nullptr) {
             uint32_t image_size_bytes = source_dimensions.x * source_dimensions.y * RmlTextureFormatBytesPerPixel;
-
             // Calculate the texture padding for alignment purposes.
             uint32_t row_pitch = source_dimensions.x * RmlTextureFormatBytesPerPixel;
             uint32_t row_byte_width, row_byte_padding;
@@ -516,27 +534,18 @@ public:
 
             // Copy the source data into the upload buffer.
             uint8_t* dst_data = (uint8_t *)(copy_buffer_->map());
-            if (row_byte_padding == 0) {
-                // Copy row-by-row if the image is flipped.
-                if (flip_y) {
-                    for (int row = 0; row < source_dimensions.y; row++) {
-                        memcpy(dst_data + row_byte_width * (source_dimensions.y - row - 1), source + row_byte_width * row, row_byte_width);
-                    }
-                }
-                // Directly copy if no padding is needed and the image isn't flipped.
-                else {
-                    memcpy(dst_data, source, image_size_bytes);
-                }
+            if (row_byte_padding == 0 && !flip_y) {
+                memcpy(dst_data, source, image_size_bytes);
             }
-            // Otherwise pad each row as necessary.
             else {
-                const Rml::byte *src_data = flip_y ? source + row_pitch * (source_dimensions.y - 1) : source;
-                uint32_t src_stride = flip_y ? -row_pitch : row_pitch;
-
                 for (int row = 0; row < source_dimensions.y; row++) {
-                    memcpy(dst_data, src_data, row_pitch);
-                    src_data += src_stride;
-                    dst_data += row_byte_width;
+                    int source_row = row;
+                    if (flip_y) {
+                        source_row = source_dimensions.y - 1 - row;
+                    }
+                    const uint8_t* source_pixels = source + row_pitch * source_row;
+                    uint8_t* destination_pixels = dst_data + row_byte_width * row;
+                    memcpy(destination_pixels, source_pixels, row_pitch);
                 }
             }
 
@@ -658,7 +667,8 @@ public:
 
             RmlPushConstants constants{
                 .transform = Rml::Matrix4f::Identity(),
-                .translation = Rml::Vector2f(0.0f, 0.0f)
+                .translation = Rml::Vector2f(0.0f, 0.0f),
+                .texture_premultiplied = 1
             };
 
             list_->setGraphicsPushConstants(0, &constants);

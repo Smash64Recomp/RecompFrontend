@@ -1,6 +1,7 @@
 struct Input {
     float4x4 transform;
     float2 translation;
+    uint texture_premultiplied;
 };
 
 [[vk::push_constant]]
@@ -12,6 +13,7 @@ void VSMain(
     in float2 iUV : TEXCOORD,
     out float4 oColor : COLOR,
     out float2 oUV : TEXCOORD,
+    out nointerpolation uint oTexturePremultiplied : TEXCOORD1,
     out float4 oPosition : SV_Position
 )
 {
@@ -20,4 +22,5 @@ void VSMain(
 
 	oColor = iColor;
 	oUV = iUV;
+    oTexturePremultiplied = gInput.texture_premultiplied;
 }

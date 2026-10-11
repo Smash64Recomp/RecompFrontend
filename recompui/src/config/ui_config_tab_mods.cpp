@@ -21,12 +21,6 @@ void config::create_mods_tab(const std::string &name) {
 
     // Verify we actually SUPPORT mod discovery
     if (!get_discovery_url().empty()) {
-        // We don't really want to deal with the risk of doing a mod reload/install while the game is running
-        // So I just disable displaying this entirely because its the stupid simple option.
-        if (ultramodern::is_game_started()) {
-            return;
-        }
-
         config::create_tab(
             config::mod_discovery::tab_name,
             config::mod_discovery::id,

@@ -190,6 +190,7 @@ namespace recompui {
             throw std::runtime_error("Config modal has not been initialized.");
         }
 
+        config_modal->set_tab_visible(config::mod_discovery::id, !ultramodern::is_game_started());
         config_modal->open();
     }
 

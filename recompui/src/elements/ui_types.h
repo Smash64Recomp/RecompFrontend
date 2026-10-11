@@ -21,7 +21,8 @@ namespace recompui {
 
     enum class Cursor {
         None,
-        Pointer
+        Pointer,
+        Text
     };
 
     // These two enums must be kept in sync with patches/recompui_event_structs.h!

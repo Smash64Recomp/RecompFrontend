@@ -4,6 +4,8 @@
 #include <chrono>
 #include <curl/curl.h>
 #include <filesystem>
+#include <gzip/decompress.hpp>
+#include <gzip/utils.hpp>
 #include <stdexcept>
 #include <string>
 
@@ -97,19 +99,13 @@ namespace recompui
         CurlSession session;
         std::string response;
 
-        std::string busted_url = append_cache_busting_query(url);
-
-        curl_easy_setopt(session.handle, CURLOPT_URL, busted_url.c_str());
+        curl_easy_setopt(session.handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(session.handle, CURLOPT_WRITEFUNCTION,
                          write_string_callback);
         curl_easy_setopt(session.handle, CURLOPT_WRITEDATA, &response);
         curl_easy_setopt(session.handle, CURLOPT_TIMEOUT, 30L);
 
-        struct curl_slist *headers = make_no_cache_headers();
-        curl_easy_setopt(session.handle, CURLOPT_HTTPHEADER, headers);
-
         CURLcode res = session.perform();
-        curl_slist_free_all(headers);
 
         if (res != CURLE_OK)
             throw std::runtime_error(std::string("libcurl error: ") +
@@ -122,6 +118,9 @@ namespace recompui
         if (response.empty())
             throw std::runtime_error("No data received from server");
 
+        // Thunderstore's new API uses gzip blobs.
+        if (gzip::is_compressed(response.data(), response.size()))
+            return gzip::decompress(response.data(), response.size());
         return response;
     }
 

@@ -563,6 +563,9 @@ namespace recompui {
         case Cursor::Pointer:
             set_property(Rml::PropertyId::Cursor, Rml::Property("pointer", Rml::Unit::STRING));
             break;
+        case Cursor::Text:
+            set_property(Rml::PropertyId::Cursor, Rml::Property("text", Rml::Unit::STRING));
+            break;
         default:
             assert(false && "Unknown cursor.");
             break;

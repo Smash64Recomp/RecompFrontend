@@ -174,15 +174,18 @@ namespace recompui
         Container *search_group = context.create_element<Container>(
             filter_container, FlexDirection::Row, JustifyContent::FlexStart);
         search_group->set_align_items(AlignItems::Center);
-        search_group->set_gap(10.0f);
         search_group->set_flex(0.0f, 0.0f);
         search_group->set_width(280.0f, Unit::Px);
 
         Label *search_label = context.create_element<Label>(
             search_group, "Search:", LabelStyle::Small);
         search_label->set_color(Color{180, 180, 180, 255});
+        search_label->set_flex(0.0f, 0.0f);
+        search_label->set_white_space(WhiteSpace::Nowrap);
+        search_label->set_margin_right(10.0f);
 
         search_input = context.create_element<TextInput>(search_group);
+        search_input->set_cursor(Cursor::Text);
         search_input->set_flex(1.0f, 1.0f);
         search_input->set_min_width(120.0f);
         search_input->set_background_color(Color{40, 38, 50, 255});
@@ -242,15 +245,19 @@ namespace recompui
             std::string discovery_url = get_discovery_url();
             if (discovery_url.empty())
                 throw std::runtime_error("No discovery URL configured for this game");
-            std::string json_data = http_fetch_string(discovery_url);
-            std::vector<DiscoveryMod> mods = parse_discovery_json(json_data);
-            fetched_mods = mods;
+            const auto index = nlohmann::json::parse(http_fetch_string(discovery_url));
+
+            std::vector<DiscoveryMod> mods;
+            for (const auto &chunk_url : index)
+            {
+                auto chunk_mods = parse_discovery_json(http_fetch_string(chunk_url.get<std::string>()));
+                mods.insert(mods.end(), chunk_mods.begin(), chunk_mods.end());
+            }
+            fetched_mods = std::move(mods);
             load_discovery_mods(fetched_mods);
         }
         catch (const std::exception &e)
-        {
-            status_label->set_text("Failed to load discovery data: " +
-                                   std::string(e.what()));
+        { status_label->set_text("No mods available right now. Check later!");
         }
 
         is_loading = false;
@@ -323,9 +330,6 @@ namespace recompui
         {
             throw std::runtime_error("JSON parsing error: " + std::string(e.what()));
         }
-
-        if (mods.empty())
-            throw std::runtime_error("No valid mods found in JSON");
 
         return mods;
     }

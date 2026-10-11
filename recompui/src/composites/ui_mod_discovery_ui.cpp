@@ -195,7 +195,7 @@ namespace recompui
 
         // Right side: sort toggle button
         sort_name_button =
-            context.create_element<Button>(filter_container, "Name (A\u2192Z)",
+            context.create_element<Button>(filter_container, "Name (A-Z)",
                                            ButtonStyle::Secondary);
         sort_name_button->add_pressed_callback([this]()
                                                {
@@ -203,8 +203,8 @@ namespace recompui
                                                        !sort_name_ascending;
                                                    sort_name_button->set_text(
                                                        sort_name_ascending
-                                                           ? "Name (A\u2192Z)"
-                                                           : "Name (Z\u2192A)");
+                                                           ? "Name (A-Z)"
+                                                           : "Name (Z-A)");
                                                    refresh_discovery_mods();
                                                });
 
